@@ -6,6 +6,9 @@ write a test and get some metrics back.
 The metrics query is probably not correct and needs to be adjusted to have
 lower resolution and more points that can be reasoned about.
 
+The traffic within the cluster is only the baseline, there is no artificial
+load generated. Next logical step would be to add some chatty pods.
+
 ```
 ❯ make
 go test -v . -count=1
