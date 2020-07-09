@@ -33,7 +33,7 @@ func TestBaseline(t *testing.T) {
 	deployMonitoring(t, test)
 	exposePrometheus(t, test)
 
-	log.Println("Lettins the cluster run to gather metrics...")
+	log.Println("Letting the cluster run to gather metrics...")
 	<-time.After(7 * time.Minute)
 	queryCPUMetrics(t, getPrometheusURL(t), 5*time.Minute)
 
@@ -42,7 +42,7 @@ func TestBaseline(t *testing.T) {
 
 func createMinikube(t *testing.T) {
 	if isMinikubeRunning(t) {
-		t.Fatal("minikube is already running. Delte it ant let the test set it up")
+		t.Fatal("minikube is already running. Delete it and let the test set it up")
 	}
 
 	startCNIMinikube(t)
@@ -115,7 +115,7 @@ func queryCPUMetrics(t *testing.T, base string, duration time.Duration) {
 		Address: base,
 	})
 	if err != nil {
-		t.Fatal("rrror creating prometheus client", err)
+		t.Fatal("error creating prometheus client", err)
 	}
 
 	v1api := v1.NewAPI(client)
