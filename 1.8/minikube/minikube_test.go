@@ -33,8 +33,9 @@ func TestBaseline(t *testing.T) {
 	deployMonitoring(t, test)
 	exposePrometheus(t, test)
 
-	log.Println("Letting the cluster run to gather metrics...")
-	<-time.After(7 * time.Minute)
+	runTime := 7 * time.Minute
+	log.Printf("Letting the cluster run for %v to gather metrics...", runTime)
+	<-time.After(runTime)
 	queryCPUMetrics(t, getPrometheusURL(t), 5*time.Minute)
 
 	deleteMinikube(t)
