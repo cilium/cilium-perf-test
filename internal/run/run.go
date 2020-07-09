@@ -39,7 +39,7 @@ func Command(name string, args ...string) error {
 	}()
 
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("error whilte runnning command %q: %v", full, err)
+		return fmt.Errorf("error while runnning command %q: %v", full, err)
 	}
 
 	wg.Wait()
