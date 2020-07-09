@@ -20,6 +20,7 @@ import (
 // Baseline overhead of running cilium with hubble enabled.
 func TestBaseline(t *testing.T) {
 	createMinikube(t)
+	defer deleteMinikube(t)
 
 	h := kt.New(kt.Options{
 		LogLevel: logger.Debug,
@@ -37,8 +38,6 @@ func TestBaseline(t *testing.T) {
 	log.Printf("Letting the cluster run for %v to gather metrics...", runTime)
 	<-time.After(runTime)
 	queryCPUMetrics(t, getPrometheusURL(t), 5*time.Minute)
-
-	deleteMinikube(t)
 }
 
 func createMinikube(t *testing.T) {
