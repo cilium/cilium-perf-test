@@ -76,7 +76,7 @@ func deployCilium(t *testing.T, test *kt.Test, namespace string) {
 		"kubectl",
 		"apply",
 		"-n", namespace,
-		"-f", "../manifests/cilium-hubble-metrics-gke-d4415c6fc.yaml",
+		"-f", "../manifests/cilium-hubble-metrics-gke-de838c984dfd.yaml",
 	); err != nil {
 		t.Fatalf("failed to apply cilium manifest: %v", err)
 	}

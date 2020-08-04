@@ -29,6 +29,9 @@ gcloud container clusters create --image-type COS --machine-type n1-standard-4 -
 
 # Pull down the k8s credentials for this cluster
 gcloud container clusters get-credentials --zone $GKE_ZONE $GKE_CLUSTER_NAME
+
+# Extract the Cluster CIDR to enable native routing:
+export GKE_NATIVE_CIDR="$(gcloud container clusters describe $GKE_CLUSTER_NAME --zone $GKE_ZONE --format 'value(clusterIpv4Cidr)')"
 ```
 
 In case you previously resized the cluster (see [Teardown](#teardown) below),
@@ -55,4 +58,51 @@ After you're done, resize or delete the cluster (resizing to 0 is possible, scal
 gcloud container clusters resize $GKE_CLUSTER_NAME --node-pool default-pool --num-nodes 0 --zone $GKE_ZONE
 # ...or delete the cluster
 gcloud container clusters delete --zone $GKE_ZONE $GKE_CLUSTER_NAME
+```
+
+## Update manifests
+
+Set variables
+
+```
+export MANIFESTS=$(pwd)/../manifests
+# in $GOPATH/src/github.com/cilium/cilium/install/kubernetes
+export GIT_SHA=$(git rev-parse --short HEAD)
+```
+
+For Cilium 1.8:
+
+```
+helm repo add cilium https://helm.cilium.io/
+helm template cilium cilium/cilium \
+	--namespace cilium-perf \
+	--set global.nodeinit.enabled=true \
+	--set nodeinit.reconfigureKubelet=true \
+	--set nodeinit.removeCbrBridge=true \
+	--set global.cni.binPath=/home/kubernetes/bin \
+	--set global.gke.enabled=true \
+	--set config.ipam=kubernetes \
+	--set global.nativeRoutingCIDR=$GKE_NATIVE_CIDR \
+	--set global.hubble.enabled=true \
+	--set global.hubble.metrics.enabled="{dns,drop,tcp,flow,port-distribution,icmp,http}" \
+	--set global.prometheus.enabled=true \
+	--set global.operatorPrometheus.enabled=true > ../manifests/cilium-hubble-metrics-gke-$GIT_SHA.yaml
+```
+
+For Cilium latest:
+
+```
+helm template cilium \
+	--namespace cilium-perf \
+	--set global.nodeinit.enabled=true \
+	--set nodeinit.reconfigureKubelet=true \
+	--set nodeinit.removeCbrBridge=true \
+	--set global.cni.binPath=/home/kubernetes/bin \
+	--set global.gke.enabled=true \
+	--set config.ipam=kubernetes \
+	--set global.nativeRoutingCIDR=$GKE_NATIVE_CIDR \
+	--set global.hubble.enabled=true \
+	--set global.hubble.metrics.enabled="{dns,drop,tcp,flow,port-distribution,icmp,http}" \
+	--set global.prometheus.enabled=true \
+	--set global.operatorPrometheus.enabled=true > $MANIFESTS/cilium-hubble-metrics-gke-$GIT_SHA.yaml
 ```

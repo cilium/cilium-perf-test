@@ -113,26 +113,11 @@ data:
   # Name of the cluster. Only relevant when building a mesh of clusters.
   cluster-name: default
 
-  # DNS Polling periodically issues a DNS lookup for each `matchName` from
-  # cilium-agent. The result is used to regenerate endpoint policy.
-  # DNS lookups are repeated with an interval of 5 seconds, and are made for
-  # A(IPv4) and AAAA(IPv6) addresses. Should a lookup fail, the most recent IP
-  # data is used instead. An IP change will trigger a regeneration of the Cilium
-  # policy for each endpoint and increment the per cilium-agent policy
-  # repository revision.
-  #
-  # This option is disabled by default starting from version 1.4.x in favor
-  # of a more powerful DNS proxy-based implementation, see [0] for details.
-  # Enable this option if you want to use FQDN policies but do not want to use
-  # the DNS proxy.
-  #
-  # To ease upgrade, users may opt to set this option to "true".
-  # Otherwise please refer to the Upgrade Guide [1] which explains how to
-  # prepare policy rules for upgrade.
-  #
-  # [0] http://docs.cilium.io/en/stable/policy/language/#dns-based
-  # [1] http://docs.cilium.io/en/stable/install/upgrade/#changes-that-may-require-action
-  tofqdns-enable-poller: "false"
+  ipam: "kubernetes"
+  tunnel: "disabled"
+  enable-endpoint-routes: "true"
+  blacklist-conflicting-routes: "false"
+  enable-local-node-route: "false"
 
   # wait-bpf-mount makes init container wait until bpf filesystem is mounted
   wait-bpf-mount: "false"
@@ -142,12 +127,12 @@ data:
   enable-xt-socket-fallback: "true"
   install-iptables-rules: "true"
   auto-direct-node-routes: "false"
+  native-routing-cidr: 10.32.0.0/14
   kube-proxy-replacement:  "probe"
+  enable-health-check-nodeport: "true"
   node-port-bind-protection: "true"
   enable-auto-protect-node-port-range: "true"
   enable-session-affinity: "true"
-  k8s-require-ipv4-pod-cidr: "true"
-  k8s-require-ipv6-pod-cidr: "false"
   enable-endpoint-health-checking: "true"
   enable-well-known-identities: "false"
   enable-remote-node-identity: "true"
@@ -172,9 +157,7 @@ data:
     http
   # An additional address for Hubble server to listen to (e.g. ":4244").
   hubble-listen-address: ""
-  ipam: "cluster-pool"
-  cluster-pool-ipv4-cidr: "10.0.0.0/8"
-  cluster-pool-ipv4-mask-size: "24"
+  ipam: "kubernetes"
   disable-cnp-status-updates: "true"
 ---
 # Source: cilium/charts/agent/templates/clusterrole.yaml
@@ -249,6 +232,8 @@ rules:
   - ciliumnodes
   - ciliumnodes/status
   - ciliumidentities
+# deprecated remove in v1.9
+  - ciliumidentities/status
   verbs:
   - '*'
 ---
@@ -471,7 +456,7 @@ spec:
               key: custom-cni-conf
               name: cilium-config
               optional: true
-        image: "docker.io/cilium/cilium:v1.8.0"
+        image: "docker.io/cilium/cilium:v1.8.2"
         imagePullPolicy: IfNotPresent
         lifecycle:
           postStart:
@@ -522,6 +507,13 @@ spec:
           name: xtables-lock
       hostNetwork: true
       initContainers:
+      - name: wait-for-node-init
+        command: ['sh', '-c', 'until stat /tmp/cilium-bootstrap-time > /dev/null 2>&1; do echo "Waiting on node-init to run..."; sleep 1; done']
+        image: "docker.io/cilium/cilium:v1.8.2"
+        imagePullPolicy: IfNotPresent
+        volumeMounts:
+        - mountPath: /tmp/cilium-bootstrap-time
+          name: cilium-bootstrap-file
       - command:
         - /init-container.sh
         env:
@@ -543,7 +535,7 @@ spec:
               key: wait-bpf-mount
               name: cilium-config
               optional: true
-        image: "docker.io/cilium/cilium:v1.8.0"
+        image: "docker.io/cilium/cilium:v1.8.2"
         imagePullPolicy: IfNotPresent
         name: clean-cilium-state
         securityContext:
@@ -562,7 +554,6 @@ spec:
             cpu: 100m
             memory: 100Mi
       restartPolicy: Always
-      priorityClassName: system-node-critical
       serviceAccount: cilium
       serviceAccountName: cilium
       terminationGracePeriodSeconds: 1
@@ -581,7 +572,7 @@ spec:
         name: bpf-maps
       # To install cilium cni plugin in the host
       - hostPath:
-          path:  /opt/cni/bin
+          path:  /home/kubernetes/bin
           type: DirectoryOrCreate
         name: cni-path
         # To install cilium cni configuration in the host
@@ -598,6 +589,10 @@ spec:
           path: /run/xtables.lock
           type: FileOrCreate
         name: xtables-lock
+      - hostPath:
+          path: /tmp/cilium-bootstrap-time
+          type: FileOrCreate
+        name: cilium-bootstrap-file
         # To read the clustermesh configuration
       - name: clustermesh-secrets
         secret:
@@ -612,6 +607,106 @@ spec:
     rollingUpdate:
       maxUnavailable: 2
     type: RollingUpdate
+---
+# Source: cilium/charts/nodeinit/templates/daemonset.yaml
+kind: DaemonSet
+apiVersion: apps/v1
+metadata:
+  name: cilium-node-init
+  namespace: cilium-perf
+  labels:
+    app: cilium-node-init
+spec:
+  selector:
+    matchLabels:
+      app: cilium-node-init
+  template:
+    metadata:
+      labels:
+        app: cilium-node-init
+    spec:
+      tolerations:
+      - operator: Exists
+      hostPID: true
+      hostNetwork: true
+      containers:
+        - name: node-init
+          image: "docker.io/cilium/startup-script:af2a99046eca96c0138551393b21a5c044c7fe79"
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            privileged: true
+          env:
+          - name: CHECKPOINT_PATH
+            value: /tmp/node-init.cilium.io
+          # STARTUP_SCRIPT is the script run on node bootstrap. Node
+          # bootstrapping can be customized in this script.
+          - name: STARTUP_SCRIPT
+            value: |
+              #!/bin/bash
+
+              set -o errexit
+              set -o pipefail
+              set -o nounset
+
+              mount | grep "/sys/fs/bpf type bpf" || {
+                # Mount the filesystem until next reboot
+                echo "Mounting BPF filesystem..."
+                mount bpffs /sys/fs/bpf -t bpf
+
+                # Configure systemd to mount after next boot
+                echo "Installing BPF filesystem mount"
+                cat >/tmp/sys-fs-bpf.mount <<EOF
+              [Unit]
+              Description=Mount BPF filesystem (Cilium)
+              Documentation=http://docs.cilium.io/
+              DefaultDependencies=no
+              Before=local-fs.target umount.target
+              After=swap.target
+
+              [Mount]
+              What=bpffs
+              Where=/sys/fs/bpf
+              Type=bpf
+              Options=rw,nosuid,nodev,noexec,relatime,mode=700
+
+              [Install]
+              WantedBy=multi-user.target
+              EOF
+
+                if [ -d "/etc/systemd/system/" ]; then
+                  mv /tmp/sys-fs-bpf.mount /etc/systemd/system/
+                  echo "Installed sys-fs-bpf.mount to /etc/systemd/system/"
+                elif [ -d "/lib/systemd/system/" ]; then
+                  mv /tmp/sys-fs-bpf.mount /lib/systemd/system/
+                  echo "Installed sys-fs-bpf.mount to /lib/systemd/system/"
+                fi
+
+                # Ensure that filesystem gets mounted on next reboot
+                systemctl enable sys-fs-bpf.mount
+                systemctl start sys-fs-bpf.mount
+              }
+
+              echo "Link information:"
+              ip link
+
+              echo "Routing table:"
+              ip route
+
+              echo "Addressing:"
+              ip -4 a
+              ip -6 a
+              if ip link show cbr0; then
+                echo "Detected cbr0 bridge. Deleting interface..."
+                ip link del cbr0
+              fi
+              # GKE: Alter the kubelet configuration to run in CNI mode
+              echo "Changing kubelet configuration to --network-plugin=cni --cni-bin-dir=/home/kubernetes/bin"
+              mkdir -p /home/kubernetes/bin
+              sed -i "s:--network-plugin=kubenet:--network-plugin=cni\ --cni-bin-dir=/home/kubernetes/bin:g" /etc/default/kubelet
+              echo "Restarting kubelet..."
+              systemctl restart kubelet
+              date > /tmp/cilium-bootstrap-time
+              echo "Node initialization complete"
 ---
 # Source: cilium/charts/operator/templates/deployment.yaml
 apiVersion: apps/v1
@@ -683,7 +778,7 @@ spec:
               key: AWS_DEFAULT_REGION
               name: cilium-aws
               optional: true
-        image: "docker.io/cilium/operator-generic:v1.8.0"
+        image: "docker.io/cilium/operator-generic:v1.8.2"
         imagePullPolicy: IfNotPresent
         name: cilium-operator
         ports:
@@ -706,7 +801,6 @@ spec:
           readOnly: true
       hostNetwork: true
       restartPolicy: Always
-      priorityClassName: system-cluster-critical
       serviceAccount: cilium-operator
       serviceAccountName: cilium-operator
       volumes:
