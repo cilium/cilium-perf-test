@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os/exec"
-	"strings"
 	"testing"
 	"time"
 
@@ -14,6 +12,7 @@ import (
 	"github.com/isovalent/hubble-perf/internal/run"
 	"github.com/prometheus/client_golang/api"
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	// auth provider for GCP, enables the client to authenticate with GKE without external
@@ -57,7 +56,7 @@ func TestBaseline(t *testing.T) {
 	runTime := 7 * time.Minute
 	log.Printf("Letting the cluster run for %v to gather metrics...", runTime)
 	<-time.After(runTime)
-	queryCPUMetrics(t, getPrometheusURL(t), 5*time.Minute)
+	queryCPUMetrics(t, getPrometheusURL(t, test), 5*time.Minute)
 }
 
 func deployCilium(t *testing.T, test *kt.Test, namespace string) {
@@ -149,19 +148,28 @@ func queryCPUMetrics(t *testing.T, base string, duration time.Duration) {
 	fmt.Printf("Result:\n%v\n", result)
 }
 
-func getPrometheusURL(t *testing.T) string {
-	cmd := exec.Command(
-		"minikube",
-		"service",
-		"prometheus",
-		"--url",
-		"-n",
-		"cilium-monitoring",
-	)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatal("failed to get prometheus url", err, string(out))
+func getPrometheusURL(t *testing.T, test *kt.Test) string {
+	svc := test.GetService("cilium-monitoring", "prometheus")
+	nodePort := svc.Spec.Ports[0].NodePort
+
+	var nodes *corev1.NodeList
+	if nodes = test.ListNodes(metav1.ListOptions{}); nodes == nil {
+		t.Fatal("error listing nodes")
 	}
 
-	return strings.TrimSpace(string(out))
+	var externalIP string
+	for _, n := range nodes.Items {
+		for _, ip := range n.Status.Addresses {
+			if ip.Type == corev1.NodeExternalIP {
+				externalIP = ip.Address
+				break
+			}
+		}
+	}
+
+	if externalIP == "" {
+		t.Fatal("could not find node external IP")
+	}
+
+	return fmt.Sprintf("http://%s:%d", externalIP, nodePort)
 }
