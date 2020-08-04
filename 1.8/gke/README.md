@@ -32,6 +32,11 @@ gcloud container clusters get-credentials --zone $GKE_ZONE $GKE_CLUSTER_NAME
 
 # Extract the Cluster CIDR to enable native routing:
 export GKE_NATIVE_CIDR="$(gcloud container clusters describe $GKE_CLUSTER_NAME --zone $GKE_ZONE --format 'value(clusterIpv4Cidr)')"
+
+# Extract the main firewall rule and update it to allow all IP addresses to
+# allow ingress from our host machines for Prometheus:
+export GKE_FW_RULE_NAME="$(gcloud compute firewall-rules list --filter "name~'gke-${GKE_CLUSTER_NAME}.+-all'" --format "value(name)")"
+gcloud compute firewall-rules update "$(GKE_FW_RULE_NAME)" --source-ranges "0.0.0.0/0"
 ```
 
 In case you previously resized the cluster (see [Teardown](#teardown) below),

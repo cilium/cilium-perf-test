@@ -17,6 +17,11 @@ provision: check-env
 		--zone $(GKE_ZONE) \
 		$(GKE_CLUSTER_NAME)
 
+	# Extract the main firewall rule and update it to allow all IP addresses to
+	# allow ingress from our host machines for Prometheus:
+	GKE_FW_RULE_NAME := $(shell gcloud compute firewall-rules list --filter "name~'gke-${GKE_CLUSTER_NAME}.+-all'" --format "value(name)")
+	gcloud compute firewall-rules update "$(GKE_FW_RULE_NAME)" --source-ranges "0.0.0.0/0"
+
 	@echo "Consider setting the KUBECONFIG var, or select the appropriate context in kubectl."
 
 list:
