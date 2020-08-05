@@ -1,4 +1,4 @@
-.PHONY: run
+.PHONY: run provision list check-env
 run:
 	go test -v . -count=1
 
