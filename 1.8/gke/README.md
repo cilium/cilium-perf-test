@@ -39,6 +39,9 @@ export GKE_FW_RULE_NAME="$(gcloud compute firewall-rules list --filter "name~'gk
 gcloud compute firewall-rules update "${GKE_FW_RULE_NAME}" --source-ranges "0.0.0.0/0"
 ```
 
+Alternativley, you can run `make provision` to create the cluster, pull down
+the k8s credentials and extract the firewall rules.
+
 In case you previously resized the cluster (see [Teardown](#teardown) below),
 you can scale it up again instead of creating a new cluster:
 
