@@ -13,6 +13,7 @@ import (
 	"github.com/prometheus/client_golang/api"
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	// auth provider for GCP, enables the client to authenticate with GKE without external
@@ -43,6 +44,16 @@ func TestBaseline(t *testing.T) {
 	}
 
 	test := h.NewTest(t)
+
+	ns, err := test.GetNamespace(ciliumNamespace)
+	switch {
+	case apierrors.IsNotFound(err):
+	case err != nil:
+		t.Fatalf("failed to get namespace %s: %v", ciliumNamespace, err)
+	case err == nil && ns != nil:
+		t.Fatalf("namespace %s already exists", ciliumNamespace)
+	}
+
 	// Override namespace, otherwise we would get some random value which doesn't match the
 	// manifest.
 	test.Namespace = ciliumNamespace
@@ -62,10 +73,6 @@ func TestBaseline(t *testing.T) {
 func deployCilium(t *testing.T, test *kt.Test, namespace string) {
 	if namespace == "kube-system" {
 		log.Fatal("Cilium won't run in kube-system namespace on GKE.")
-	}
-
-	if err := run.Command("kubectl", "get", "ns", namespace); err != nil {
-		t.Fatalf("failed to get namespace %s: %v", namespace, err)
 	}
 
 	// deploy cilium kitchen sink. testing library doesn't support this kind of
