@@ -36,7 +36,7 @@ export GKE_NATIVE_CIDR="$(gcloud container clusters describe $GKE_CLUSTER_NAME -
 # Extract the main firewall rule and update it to allow all IP addresses to
 # allow ingress from our host machines for Prometheus:
 export GKE_FW_RULE_NAME="$(gcloud compute firewall-rules list --filter "name~'gke-${GKE_CLUSTER_NAME}.+-all'" --format "value(name)")"
-gcloud compute firewall-rules update "$(GKE_FW_RULE_NAME)" --source-ranges "0.0.0.0/0"
+gcloud compute firewall-rules update "${GKE_FW_RULE_NAME}" --source-ranges "0.0.0.0/0"
 ```
 
 In case you previously resized the cluster (see [Teardown](#teardown) below),
