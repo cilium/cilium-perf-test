@@ -87,11 +87,19 @@ func deployCilium(t *testing.T, test *kt.Test, namespace string) {
 		t.Fatalf("failed to apply cilium manifest: %v", err)
 	}
 
+	var nodes *corev1.NodeList
+	if nodes = test.ListNodes(metav1.ListOptions{}); nodes == nil {
+		t.Fatal("error listing nodes")
+	}
+	// number of cilium daemonsets + cilium-node-init daemonsets +
+	// cilium-operator deployment
+	numPods := (len(nodes.Items) * 2) + 1
+
 	// wait for pods to come up
 	if err := test.WaitForPodsReady(
 		namespace,
 		metav1.ListOptions{},
-		1,             // all pods are 1/1
+		numPods,       // all pods are 1/1
 		3*time.Minute, // ui usually takes about ~60s so give it some room
 	); err != nil {
 		t.Fatal("error waiting for pods", err)
