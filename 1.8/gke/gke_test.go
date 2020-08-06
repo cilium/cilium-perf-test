@@ -141,7 +141,7 @@ func deployMonitoring(t *testing.T, test *kt.Test) {
 	if err := test.WaitForPodsReady(
 		"cilium-monitoring",
 		metav1.ListOptions{},
-		1,
+		2,
 		3*time.Minute,
 	); err != nil {
 		t.Fatal("cilium monitoring not ready", err)
