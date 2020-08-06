@@ -96,6 +96,29 @@ func deployCilium(t *testing.T, test *kt.Test, namespace string) {
 	); err != nil {
 		t.Fatal("error waiting for pods", err)
 	}
+
+	// restart metrics-server by deleting it so that it's managed by cilium
+	if err := run.Command(
+		"kubectl",
+		"delete",
+		"-n", "kube-system",
+		"pod",
+		"-l", "k8s-app=metrics-server",
+	); err != nil {
+		t.Fatalf("failed to deploy cilium monitoring: %v", err)
+	}
+
+	// wait for metrics-server pod
+	if err := test.WaitForPodsReady(
+		"kube-system",
+		metav1.ListOptions{
+			LabelSelector: "k8s-app=metrics-server",
+		},
+		1, // all pods are 1/1
+		2*time.Minute,
+	); err != nil {
+		t.Fatal("error waiting for metrics-server pod", err)
+	}
 }
 
 func deployMonitoring(t *testing.T, test *kt.Test) {
