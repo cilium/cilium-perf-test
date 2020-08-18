@@ -25,7 +25,13 @@ gcloud container clusters list | grep $GKE_CLUSTER_NAME
 export KUBECONFIG=$HOME/.kube/config
 
 # Create cluster
-gcloud container clusters create --image-type COS --machine-type n1-standard-4 --zone $GKE_ZONE $GKE_CLUSTER_NAME --num-nodes 2
+gcloud container clusters create \
+	--release-channel rapid \
+	--zone $GKE_ZONE \
+	--image-type COS \
+	--machine-type n1-standard-4 \
+	--num-nodes 2 \
+	$GKE_CLUSTER_NAME
 
 # Pull down the k8s credentials for this cluster
 gcloud container clusters get-credentials --zone $GKE_ZONE $GKE_CLUSTER_NAME
