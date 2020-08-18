@@ -67,7 +67,7 @@ func TestBaseline(t *testing.T) {
 	runTime := 7 * time.Minute
 	log.Printf("Letting the cluster run for %v to gather metrics...", runTime)
 	<-time.After(runTime)
-	queryCPUMetrics(t, getPrometheusURL(t, test), 5*time.Minute)
+	queryMetrics(t, getPrometheusURL(t, test), 5*time.Minute)
 }
 
 func deployCilium(t *testing.T, test *kt.Test, namespace string) {
@@ -158,7 +158,7 @@ func exposePrometheus(t *testing.T, test *kt.Test) {
 	}
 }
 
-func queryCPUMetrics(t *testing.T, base string, duration time.Duration) {
+func queryMetrics(t *testing.T, base string, duration time.Duration) {
 	client, err := prometheusapi.NewClient(prometheusapi.Config{
 		Address: base,
 	})
@@ -174,16 +174,26 @@ func queryCPUMetrics(t *testing.T, base string, duration time.Duration) {
 		End:   time.Now(),
 		Step:  time.Minute,
 	}
-	result, _, err := promv1api.QueryRange(
-		ctx,
+
+	metrics := []string{
 		// https://github.com/cilium/cilium/blob/v1.8/examples/kubernetes/addons/prometheus/monitoring-example.yaml#L554
 		"max(irate(cilium_process_cpu_seconds_total[1m]))*100",
-		r,
-	)
-	if err != nil {
-		t.Fatal("error querying Prometheus", err)
+		// https://github.com/cilium/cilium/blob/v1.8/examples/kubernetes/addons/prometheus/monitoring-example.yaml#L694
+		"max(cilium_process_virtual_memory_bytes{k8s_app=\"cilium\"})",
 	}
-	fmt.Printf("Result:\n%v\n", result)
+
+	fmt.Printf("Results:\n")
+	for _, m := range metrics {
+		result, _, err := promv1api.QueryRange(
+			ctx,
+			m,
+			r,
+		)
+		if err != nil {
+			t.Fatal("error querying Prometheus", err)
+		}
+		fmt.Printf("%v\n", result)
+	}
 }
 
 func getPrometheusURL(t *testing.T, test *kt.Test) string {
