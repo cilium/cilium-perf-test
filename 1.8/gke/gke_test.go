@@ -10,8 +10,8 @@ import (
 	kt "github.com/dlespiau/kube-test-harness"
 	"github.com/dlespiau/kube-test-harness/logger"
 	"github.com/isovalent/hubble-perf/internal/run"
-	"github.com/prometheus/client_golang/api"
-	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
+	prometheusapi "github.com/prometheus/client_golang/api"
+	prometheusv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -159,22 +159,22 @@ func exposePrometheus(t *testing.T, test *kt.Test) {
 }
 
 func queryCPUMetrics(t *testing.T, base string, duration time.Duration) {
-	client, err := api.NewClient(api.Config{
+	client, err := prometheusapi.NewClient(prometheusapi.Config{
 		Address: base,
 	})
 	if err != nil {
 		t.Fatal("error creating prometheus client", err)
 	}
 
-	v1api := v1.NewAPI(client)
+	promv1api := prometheusv1.NewAPI(client)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	r := v1.Range{
+	r := prometheusv1.Range{
 		Start: time.Now().Add(-duration),
 		End:   time.Now(),
 		Step:  time.Minute,
 	}
-	result, _, err := v1api.QueryRange(
+	result, _, err := promv1api.QueryRange(
 		ctx,
 		// https://github.com/cilium/cilium/blob/v1.8/examples/kubernetes/addons/prometheus/monitoring-example.yaml#L554
 		"max(irate(cilium_process_cpu_seconds_total[1m]))*100",
