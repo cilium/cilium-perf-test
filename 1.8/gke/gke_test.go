@@ -45,14 +45,7 @@ func TestBaseline(t *testing.T) {
 
 	test := h.NewTest(t)
 
-	ns, err := test.GetNamespace(ciliumNamespace)
-	switch {
-	case apierrors.IsNotFound(err):
-	case err != nil:
-		t.Fatalf("failed to get namespace %s: %v", ciliumNamespace, err)
-	case err == nil && ns != nil:
-		t.Fatalf("namespace %s already exists", ciliumNamespace)
-	}
+	checkPreconditions(t, test, ciliumNamespace)
 
 	// Override namespace, otherwise we would get some random value which doesn't match the
 	// manifest.
@@ -70,11 +63,22 @@ func TestBaseline(t *testing.T) {
 	queryMetrics(t, getPrometheusURL(t, test), 5*time.Minute)
 }
 
-func deployCilium(t *testing.T, test *kt.Test, namespace string) {
+func checkPreconditions(t *testing.T, test *kt.Test, namespace string) {
 	if namespace == "kube-system" {
-		log.Fatal("Cilium won't run in kube-system namespace on GKE.")
+		t.Fatal("Cilium won't run in kube-system namespace on GKE.")
 	}
 
+	ns, err := test.GetNamespace(ciliumNamespace)
+	switch {
+	case apierrors.IsNotFound(err):
+	case err != nil:
+		t.Fatalf("failed to get namespace %s: %v", ciliumNamespace, err)
+	case err == nil && ns != nil:
+		t.Fatalf("namespace %s already exists", ciliumNamespace)
+	}
+}
+
+func deployCilium(t *testing.T, test *kt.Test, namespace string) {
 	// deploy cilium kitchen sink. testing library doesn't support this kind of
 	// an arbitrary file deploy as far as I can tell. it tried to force manifests
 	// into specific namespaces.
