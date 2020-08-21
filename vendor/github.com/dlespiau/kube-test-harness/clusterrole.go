@@ -12,6 +12,8 @@ import (
 )
 
 func (test *Test) createClusterRole(cr *rbacv1.ClusterRole) error {
+	test.Debugf("creating cluster role %s", cr.Name)
+
 	if _, err := test.harness.kubeClient.RbacV1().ClusterRoles().Create(context.TODO(), cr, metav1.CreateOptions{}); err != nil {
 		return fmt.Errorf("failed to create cluster role %s: %w", cr.Name, err)
 	}
@@ -22,6 +24,13 @@ func (test *Test) createClusterRole(cr *rbacv1.ClusterRole) error {
 func (test *Test) CreateClusterRole(cr *rbacv1.ClusterRole) {
 	err := test.createClusterRole(cr)
 	test.err(err)
+
+	test.addFinalizer(func() error {
+		if err := test.deleteClusterRole(cr.Name); err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 func (test *Test) loadClusterRole(manifestPath string) (*rbacv1.ClusterRole, error) {
@@ -63,16 +72,18 @@ func (test *Test) CreateClusterRoleFromFile(manifestPath string) *rbacv1.Cluster
 	return cr
 }
 
-func (test *Test) deleteClusterRole(cr *rbacv1.ClusterRole) error {
-	if err := test.harness.kubeClient.RbacV1().ClusterRoles().Delete(context.TODO(), cr.Name, metav1.DeleteOptions{}); err != nil {
-		return fmt.Errorf("deleting cluster role %s failed: %w", cr.Name, err)
+func (test *Test) deleteClusterRole(name string) error {
+	test.Debugf("deleting cluster role %s", name)
+
+	if err := test.harness.kubeClient.RbacV1().ClusterRoles().Delete(context.TODO(), name, metav1.DeleteOptions{}); err != nil {
+		return fmt.Errorf("deleting cluster role %s failed: %w", name, err)
 	}
 	return nil
 }
 
 // DeleteClusterRole deletes a cluster role.
 func (test *Test) DeleteClusterRole(cr *rbacv1.ClusterRole) {
-	err := test.deleteClusterRole(cr)
+	err := test.deleteClusterRole(cr.Name)
 	test.err(err)
 }
 
@@ -86,6 +97,8 @@ func (test *Test) GetClusterRole(name string) (*rbacv1.ClusterRole, error) {
 }
 
 func (test *Test) waitForClusterRoleReady(name string, timeout time.Duration) error {
+	test.Debugf("waiting for cluster role %s to be ready", name)
+
 	return wait.Poll(time.Second, timeout, func() (bool, error) {
 		_, err := test.GetClusterRole(name)
 		if err != nil {

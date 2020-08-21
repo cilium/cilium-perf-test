@@ -12,6 +12,8 @@ import (
 )
 
 func (test *Test) createClusterRoleBinding(crb *rbacv1.ClusterRoleBinding) error {
+	test.Debugf("creating cluster role binding %s", crb.Name)
+
 	if _, err := test.harness.kubeClient.RbacV1().ClusterRoleBindings().Create(context.TODO(), crb, metav1.CreateOptions{}); err != nil {
 		return fmt.Errorf("failed to create cluster role binding %s: %w", crb.Name, err)
 	}
@@ -22,6 +24,13 @@ func (test *Test) createClusterRoleBinding(crb *rbacv1.ClusterRoleBinding) error
 func (test *Test) CreateClusterRoleBinding(crb *rbacv1.ClusterRoleBinding) {
 	err := test.createClusterRoleBinding(crb)
 	test.err(err)
+
+	test.addFinalizer(func() error {
+		if err := test.deleteClusterRoleBinding(crb.Name); err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 func (test *Test) loadClusterRoleBinding(manifestPath string) (*rbacv1.ClusterRoleBinding, error) {
@@ -63,16 +72,18 @@ func (test *Test) CreateClusterRoleBindingFromFile(manifestPath string) *rbacv1.
 	return crb
 }
 
-func (test *Test) deleteClusterRoleBinding(crb *rbacv1.ClusterRoleBinding) error {
-	if err := test.harness.kubeClient.RbacV1().ClusterRoleBindings().Delete(context.TODO(), crb.Name, metav1.DeleteOptions{}); err != nil {
-		return fmt.Errorf("deleting cluster role binding %s failed: %w", crb.Name, err)
+func (test *Test) deleteClusterRoleBinding(name string) error {
+	test.Debugf("deleting cluster role binding %s", name)
+
+	if err := test.harness.kubeClient.RbacV1().ClusterRoleBindings().Delete(context.TODO(), name, metav1.DeleteOptions{}); err != nil {
+		return fmt.Errorf("deleting cluster role binding %s failed: %w", name, err)
 	}
 	return nil
 }
 
 // DeleteClusterRoleBinding deletes a cluster role binding.
 func (test *Test) DeleteClusterRoleBinding(crb *rbacv1.ClusterRoleBinding) {
-	err := test.deleteClusterRoleBinding(crb)
+	err := test.deleteClusterRoleBinding(crb.Name)
 	test.err(err)
 }
 
@@ -86,6 +97,8 @@ func (test *Test) GetClusterRoleBinding(name string) (*rbacv1.ClusterRoleBinding
 }
 
 func (test *Test) waitForClusterRoleBindingReady(name string, timeout time.Duration) error {
+	test.Debugf("waiting for cluster role binding %s to be ready", name)
+
 	return wait.Poll(time.Second, timeout, func() (bool, error) {
 		_, err := test.GetClusterRoleBinding(name)
 		if err != nil {
