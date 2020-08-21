@@ -1,20 +1,25 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io/ioutil"
 	"log"
+	"os"
 	"testing"
 	"time"
 
 	kt "github.com/dlespiau/kube-test-harness"
 	"github.com/dlespiau/kube-test-harness/logger"
-	"github.com/isovalent/hubble-perf/internal/run"
 	prometheusapi "github.com/prometheus/client_golang/api"
 	prometheusv1 "github.com/prometheus/client_golang/api/prometheus/v1"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/scheme"
 
 	// auth provider for GCP, enables the client to authenticate with GKE without external
 	// dependencies (e.g. gcloud CLI)
@@ -22,8 +27,8 @@ import (
 )
 
 const (
-	// Make sure this matches the namespace in the Cilium deployment YAML.
-	ciliumNamespace = "cilium-perf"
+	ciliumNamespace           = "cilium-perf"
+	ciliumMonitoringNamespace = "cilium-monitoring"
 )
 
 // Baseline overhead of running cilium with hubble enabled.
@@ -78,18 +83,71 @@ func checkPreconditions(t *testing.T, test *kt.Test, namespace string) {
 	}
 }
 
-func deployCilium(t *testing.T, test *kt.Test, namespace string) {
-	// deploy cilium kitchen sink. testing library doesn't support this kind of
-	// an arbitrary file deploy as far as I can tell. it tried to force manifests
-	// into specific namespaces.
-	if err := run.Command(
-		"kubectl",
-		"apply",
-		"-n", namespace,
-		"-f", "../manifests/cilium-hubble-metrics-gke-de838c984dfd.yaml",
-	); err != nil {
-		t.Fatalf("failed to apply cilium manifest: %v", err)
+// Reading of YAML file copied from github.com/cilium/cilium/pkg/policy/trace/yaml.go
+// TODO: use k8s.io/apimachinery/pkg/util/yaml or similar
+func loadYAML(t *testing.T, manifest string) [][]byte {
+	f, err := os.Open(manifest)
+	if err != nil {
+		t.Fatalf("failed to open manifest %q: %s", manifest, err)
 	}
+	defer f.Close()
+
+	m, err := ioutil.ReadAll(f)
+	if err != nil {
+		t.Fatalf("failed to read manifest %q: %s", manifest, err)
+	}
+
+	return bytes.Split(m, []byte("---"))
+}
+
+// deployManifest deploys all k8s objects defined in the file manifest to namespace.
+func deployManifest(t *testing.T, test *kt.Test, manifest, namespace string) {
+	docs := loadYAML(t, manifest)
+	for _, d := range docs {
+		if len(d) < 2 {
+			continue
+		}
+
+		obj, _, err := scheme.Codecs.UniversalDeserializer().Decode(d, nil, nil)
+		if err != nil {
+			t.Log(d)
+			t.Fatalf("failed to decode: %s", err)
+		}
+
+		switch obj.(type) {
+		case *rbacv1.ClusterRole:
+			cr := obj.(*rbacv1.ClusterRole)
+			test.CreateClusterRole(cr)
+		case *rbacv1.ClusterRoleBinding:
+			crb := obj.(*rbacv1.ClusterRoleBinding)
+			test.CreateClusterRoleBinding(crb)
+		case *corev1.ConfigMap:
+			cm := obj.(*corev1.ConfigMap)
+			test.CreateConfigMap(namespace, cm)
+		case *appsv1.DaemonSet:
+			ds := obj.(*appsv1.DaemonSet)
+			test.CreateDaemonSet(namespace, ds)
+		case *appsv1.Deployment:
+			d := obj.(*appsv1.Deployment)
+			test.CreateDeployment(namespace, d)
+		case *corev1.Namespace:
+			n := obj.(*corev1.Namespace)
+			test.CreateNamespace(n.Name)
+		case *corev1.Service:
+			s := obj.(*corev1.Service)
+			test.CreateService(namespace, s)
+		case *corev1.ServiceAccount:
+			sa := obj.(*corev1.ServiceAccount)
+			test.CreateServiceAccount(namespace, sa)
+		default:
+			t.Fatalf("k8s resource %T not handled", obj)
+		}
+	}
+}
+
+func deployCilium(t *testing.T, test *kt.Test, namespace string) {
+	// deploy cilium kitchen sink
+	deployManifest(t, test, "../manifests/cilium-hubble-metrics-gke-de838c984dfd.yaml", test.Namespace)
 
 	var nodes *corev1.NodeList
 	if nodes = test.ListNodes(metav1.ListOptions{}); nodes == nil {
@@ -110,21 +168,20 @@ func deployCilium(t *testing.T, test *kt.Test, namespace string) {
 	}
 
 	// restart metrics-server by deleting it so that it's managed by cilium
-	if err := run.Command(
-		"kubectl",
-		"delete",
-		"-n", "kube-system",
-		"pod",
-		"-l", "k8s-app=metrics-server",
-	); err != nil {
-		t.Fatalf("failed to deploy cilium monitoring: %v", err)
+	metricsServerLabel := "k8s-app=metrics-server"
+	pods := test.ListPods("kube-system", metav1.ListOptions{
+		LabelSelector: metricsServerLabel,
+	})
+	for _, p := range pods.Items {
+		t.Logf("Deleting pod %s matching label %s", p.Name, metricsServerLabel)
+		test.DeletePod(&p)
 	}
 
 	// wait for metrics-server pod
 	if err := test.WaitForPodsReady(
 		"kube-system",
 		metav1.ListOptions{
-			LabelSelector: "k8s-app=metrics-server",
+			LabelSelector: metricsServerLabel,
 		},
 		1, // all pods are 1/1
 		2*time.Minute,
@@ -134,16 +191,10 @@ func deployCilium(t *testing.T, test *kt.Test, namespace string) {
 }
 
 func deployMonitoring(t *testing.T, test *kt.Test) {
-	if err := run.Command(
-		"kubectl",
-		"apply", "-f",
-		"../manifests/cilium-monitoring-263ebed.yaml",
-	); err != nil {
-		t.Fatalf("failed to deploy cilium monitoring: %v", err)
-	}
+	deployManifest(t, test, "../manifests/cilium-monitoring-263ebed.yaml", ciliumMonitoringNamespace)
 
 	if err := test.WaitForPodsReady(
-		"cilium-monitoring",
+		ciliumMonitoringNamespace,
 		metav1.ListOptions{},
 		2,
 		3*time.Minute,
@@ -153,12 +204,31 @@ func deployMonitoring(t *testing.T, test *kt.Test) {
 }
 
 func exposePrometheus(t *testing.T, test *kt.Test) {
-	if err := run.Command(
-		"kubectl",
-		"apply", "-f",
-		"../manifests/expose-prometheus.yaml",
-	); err != nil {
-		t.Fatalf("failed to deploy cilium monitoring: %v", err)
+	docs := loadYAML(t, "../manifests/expose-prometheus.yaml")
+	for _, d := range docs {
+		if len(d) < 2 {
+			continue
+		}
+
+		obj, _, err := scheme.Codecs.UniversalDeserializer().Decode(d, nil, nil)
+		if err != nil {
+			t.Log(d)
+			t.Fatalf("failed to decode: %s", err)
+		}
+
+		switch obj.(type) {
+		case *corev1.Service:
+			newSvc := obj.(*corev1.Service)
+			svc := test.GetService(ciliumMonitoringNamespace, newSvc.Name)
+			// TODO: for now this just hard-codes the fields the expose-prometheus.xml
+			// manifest specifies.
+			svc.Spec.Ports = newSvc.Spec.Ports
+			svc.Spec.Selector = newSvc.Spec.Selector
+			svc.Spec.Type = newSvc.Spec.Type
+			test.UpdateService(svc)
+		default:
+			t.Fatalf("k8s resource %T not handled", obj)
+		}
 	}
 }
 
