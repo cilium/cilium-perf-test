@@ -24,6 +24,11 @@ provision: check-env
 
 	@echo "Consider setting the KUBECONFIG var, or select the appropriate context in kubectl."
 
+cleanup:
+	-kubectl delete clusterroles cilium cilium-operator prometheus
+	-kubectl delete clusterrolebindings cilium cilium-operator prometheus
+	-kubectl delete namespace cilium-perf cilium-monitoring
+
 list:
 	# List the current clusters.
 	gcloud container clusters list
