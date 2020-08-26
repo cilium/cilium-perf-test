@@ -250,23 +250,38 @@ func queryMetrics(t *testing.T, base string, duration time.Duration) {
 	}
 
 	metrics := []string{
-		// https://github.com/cilium/cilium/blob/v1.8/examples/kubernetes/addons/prometheus/monitoring-example.yaml#L554
-		"max(irate(cilium_process_cpu_seconds_total[1m]))*100",
-		// https://github.com/cilium/cilium/blob/v1.8/examples/kubernetes/addons/prometheus/monitoring-example.yaml#L694
-		"max(cilium_process_virtual_memory_bytes{k8s_app=\"cilium\"})",
+		// Total user and system CPU time spent in seconds.
+		"cilium_process_cpu_seconds_total",
+		// Virtual memory size in bytes.
+		"cilium_process_virtual_memory_bytes",
+		// Resident memory size in bytes.
+		"cilium_process_resident_memory_bytes",
+		// Duration of bootstrap sequence.
+		"cilium_agent_bootstrap_seconds",
+		// BPF maps kernel max memory usage size in bytes.
+		"cilium_bpf_maps_virtual_memory_max_bytes",
+		// BPF programs kernel max memory usage size in bytes.
+		"cilium_bpf_progs_virtual_memory_max_bytes",
+		// Endpoint regeneration time stats labeled by the scope.
+		"cilium_endpoint_regeneration_time_stats_seconds",
+		// Policy regeneration time stats labeled by the scope.
+		"cilium_policy_regeneration_time_stats_seconds",
 	}
 
 	fmt.Printf("Results:\n")
 	for _, m := range metrics {
-		result, _, err := promv1api.QueryRange(
-			ctx,
-			m,
-			r,
-		)
-		if err != nil {
-			t.Fatal("error querying Prometheus", err)
+		for _, op := range []string{"min", "max", "avg"} {
+			fn := fmt.Sprintf(`%s(%s{k8s_app="cilium"})`, op, m)
+			result, _, err := promv1api.QueryRange(
+				ctx,
+				fn,
+				r,
+			)
+			if err != nil {
+				t.Fatal("error querying Prometheus", err)
+			}
+			fmt.Printf("%s:\n%v\n", fn, result)
 		}
-		fmt.Printf("%v\n", result)
 	}
 }
 
