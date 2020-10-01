@@ -96,12 +96,12 @@ helm template cilium cilium/cilium \
 	--set global.cni.binPath=/home/kubernetes/bin \
 	--set global.gke.enabled=true \
 	--set config.ipam=kubernetes \
+	--set nodeinit.restartPods=true \
 	--set global.nativeRoutingCIDR=$GKE_NATIVE_CIDR \
 	--set global.hubble.enabled=true \
 	--set global.hubble.metrics.enabled="{dns,drop,tcp,flow,port-distribution,icmp,http}" \
 	--set global.prometheus.enabled=true \
-	--set global.operatorPrometheus.enabled=true > ../manifests/cilium-hubble-metrics-gke-$GIT_SHA.yaml
-```
+	--set global.operatorPrometheus.enabled=true > ../manifests/cilium-hubble-metrics-gke.yaml
 
 For Cilium latest:
 

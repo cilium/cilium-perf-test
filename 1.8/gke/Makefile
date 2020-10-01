@@ -42,3 +42,6 @@ endif
 ifndef GKE_CLUSTER_NAME
 	$(error GKE_CLUSTER_NAME is not set")
 endif
+
+build:
+	go test -c

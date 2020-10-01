@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -17,7 +18,6 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 
@@ -26,10 +26,27 @@ import (
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 )
 
-const (
-	ciliumNamespace           = "cilium-perf"
-	ciliumMonitoringNamespace = "cilium-monitoring"
+var (
+	ciliumNamespace           string
+	ciliumMonitoringNamespace string
+	prometheusServiceName     string
+	shoulDeployCilium         bool
+	duration                  time.Duration
 )
+
+func init() {
+	flag.StringVar(&ciliumNamespace, "ns", "cilium-perf", "namespace that Cilium is in")
+	flag.StringVar(&ciliumMonitoringNamespace, "prom-ns", "cilium-monitoring", "namespace with prom pods")
+	flag.StringVar(&prometheusServiceName, "prom-name", "prometheus", "prom svc name")
+	flag.BoolVar(&shoulDeployCilium, "deploy-cilium", false, "set to false if Cilium is already deployed")
+	flag.DurationVar(&duration, "duration", 7*time.Minute, "test duration")
+}
+
+// workaround that allows additional flags
+func TestMain(m *testing.M) {
+	flag.Parse()
+	os.Exit(m.Run())
+}
 
 // Baseline overhead of running cilium with hubble enabled.
 func TestBaseline(t *testing.T) {
@@ -52,34 +69,26 @@ func TestBaseline(t *testing.T) {
 
 	checkPreconditions(t, test, ciliumNamespace)
 
-	// Override namespace, otherwise we would get some random value which doesn't match the
-	// manifest.
-	test.Namespace = ciliumNamespace
-	test.Setup()
 	defer test.Close()
 
-	deployCilium(t, test, ciliumNamespace)
-	deployMonitoring(t, test)
-	exposePrometheus(t, test)
+	if shoulDeployCilium {
+		deployCilium(t, test, ciliumNamespace)
+		deployMonitoring(t, test)
+		exposePrometheus(t, test)
+	}
 
-	runTime := 7 * time.Minute
-	log.Printf("Letting the cluster run for %v to gather metrics...", runTime)
-	<-time.After(runTime)
-	queryMetrics(t, getPrometheusURL(t, test), 5*time.Minute)
+	log.Printf("Letting the cluster run for %v to gather metrics...", duration)
+	<-time.After(duration)
+	if shoulDeployCilium {
+		queryMetrics(t, getPrometheusURL(t, test), duration)
+	} else {
+		queryMetrics(t, fmt.Sprintf("http://%s.%s.svc", prometheusServiceName, ciliumMonitoringNamespace), duration)
+	}
 }
 
 func checkPreconditions(t *testing.T, test *kt.Test, namespace string) {
 	if namespace == "kube-system" {
 		t.Fatal("Cilium won't run in kube-system namespace on GKE.")
-	}
-
-	ns, err := test.GetNamespace(ciliumNamespace)
-	switch {
-	case apierrors.IsNotFound(err):
-	case err != nil:
-		t.Fatalf("failed to get namespace %s: %v", ciliumNamespace, err)
-	case err == nil && ns != nil:
-		t.Fatalf("namespace %s already exists", ciliumNamespace)
 	}
 }
 
@@ -147,7 +156,7 @@ func deployManifest(t *testing.T, test *kt.Test, manifest, namespace string) {
 
 func deployCilium(t *testing.T, test *kt.Test, namespace string) {
 	// deploy cilium kitchen sink
-	deployManifest(t, test, "../manifests/cilium-hubble-metrics-gke-de838c984dfd.yaml", test.Namespace)
+	deployManifest(t, test, "../manifests/cilium-hubble-metrics-gke.yaml", test.Namespace)
 
 	var nodes *corev1.NodeList
 	if nodes = test.ListNodes(metav1.ListOptions{}); nodes == nil {
@@ -231,7 +240,6 @@ func exposePrometheus(t *testing.T, test *kt.Test) {
 		}
 	}
 }
-
 func queryMetrics(t *testing.T, base string, duration time.Duration) {
 	client, err := prometheusapi.NewClient(prometheusapi.Config{
 		Address: base,
@@ -268,10 +276,18 @@ func queryMetrics(t *testing.T, base string, duration time.Duration) {
 		"cilium_policy_regeneration_time_stats_seconds",
 	}
 
+	var selector string
+	gkeClusterName := os.Getenv("CLUSTER_NAME")
+	if gkeClusterName == "" {
+		selector = `{k8s_app="cilium"}`
+	} else {
+		selector = fmt.Sprintf(`{k8s_app="cilium",test_cluster_name="%s"}`, gkeClusterName)
+	}
+
 	fmt.Printf("Results:\n")
 	for _, m := range metrics {
 		for _, op := range []string{"min", "max", "avg"} {
-			fn := fmt.Sprintf(`%s(%s{k8s_app="cilium"})`, op, m)
+			fn := fmt.Sprintf(`%s(%s%s)`, op, m, selector)
 			result, _, err := promv1api.QueryRange(
 				ctx,
 				fn,
@@ -286,7 +302,7 @@ func queryMetrics(t *testing.T, base string, duration time.Duration) {
 }
 
 func getPrometheusURL(t *testing.T, test *kt.Test) string {
-	svc := test.GetService("cilium-monitoring", "prometheus")
+	svc := test.GetService(ciliumMonitoringNamespace, prometheusServiceName)
 	nodePort := svc.Spec.Ports[0].NodePort
 
 	var nodes *corev1.NodeList
