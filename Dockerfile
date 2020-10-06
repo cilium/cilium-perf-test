@@ -8,6 +8,6 @@ apt-get install -y kubectl golang
 
 ENV GOPATH /go
 
-COPY . /go/src/github.com/isovalent/hubble-perf
-RUN go test -c /go/src/github.com/isovalent/hubble-perf/1.8/gke -o /usr/local/bin/perf-test
-RUN cp /go/src/github.com/isovalent/hubble-perf/1.8/gke/run_in_test_cluster.sh /usr/local/bin/run_in_test_cluster.sh
+COPY . /go/src/github.com/cilium/cilium-perf-test
+RUN go test -c /go/src/github.com/cilium/cilium-perf-test/1.8/gke -o /usr/local/bin/perf-test
+RUN cp /go/src/github.com/cilium/cilium-perf-test/1.8/gke/run_in_test_cluster.sh /usr/local/bin/run_in_test_cluster.sh

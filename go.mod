@@ -1,4 +1,4 @@
-module github.com/isovalent/hubble-perf
+module github.com/cilium/cilium-perf-test
 
 go 1.14
 
