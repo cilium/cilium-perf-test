@@ -1,3 +1,3 @@
-# hubble-perf
+# cilium-perf-test
 
-Hubble performance evaluation repo.
+Cilium performance evaluation repo.
