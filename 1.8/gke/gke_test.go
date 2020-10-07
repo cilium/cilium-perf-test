@@ -8,6 +8,7 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"path"
 	"testing"
 	"time"
 
@@ -30,59 +31,90 @@ var (
 	ciliumNamespace           string
 	ciliumMonitoringNamespace string
 	prometheusServiceName     string
-	shoulDeployCilium         bool
+	shouldDeployCilium        bool
 	duration                  time.Duration
+	manifestPath              string
+
+	harness *kt.Harness
 )
 
 func init() {
 	flag.StringVar(&ciliumNamespace, "ns", "cilium-perf", "namespace that Cilium is in")
 	flag.StringVar(&ciliumMonitoringNamespace, "prom-ns", "cilium-monitoring", "namespace with prom pods")
 	flag.StringVar(&prometheusServiceName, "prom-name", "prometheus", "prom svc name")
-	flag.BoolVar(&shoulDeployCilium, "deploy-cilium", false, "set to false if Cilium is already deployed")
+	flag.BoolVar(&shouldDeployCilium, "deploy-cilium", false, "set to false if Cilium is already deployed")
 	flag.DurationVar(&duration, "duration", 7*time.Minute, "test duration")
+	flag.StringVar(&manifestPath, "manifest-path", "../manifests", "path that manifests are in")
+}
+
+type TestCase struct {
+	name      string
+	manifests []string
+	podCount  int
 }
 
 // workaround that allows additional flags
 func TestMain(m *testing.M) {
 	flag.Parse()
-	os.Exit(m.Run())
-}
 
-// Baseline overhead of running cilium with hubble enabled.
-func TestBaseline(t *testing.T) {
-	// Assume an already running GKE test cluster
-	// TODO: check availability here
-
-	h := kt.New(kt.Options{
+	harness = kt.New(kt.Options{
 		LogLevel: logger.Debug,
 	})
-	if err := h.Setup(); err != nil {
+	if err := harness.Setup(); err != nil {
 		log.Fatal(err)
 	}
 	// h.Setup() above already calls SetKubeconfig, but doesn't handle errors, so we might end
 	// up with a harness without a k8s client. So call it to avoid that.
-	if err := h.SetKubeconfig(""); err != nil {
+	if err := harness.SetKubeconfig(""); err != nil {
 		log.Fatal(err)
 	}
+	os.Exit(m.Run())
+}
 
-	test := h.NewTest(t)
+func TestCases(t *testing.T) {
+	test := harness.NewTest(t)
+	test.Setup()
 
 	checkPreconditions(t, test, ciliumNamespace)
 
-	defer test.Close()
-
-	if shoulDeployCilium {
+	if shouldDeployCilium {
 		deployCilium(t, test, ciliumNamespace)
 		deployMonitoring(t, test)
 		exposePrometheus(t, test)
 	}
+	test.Close()
 
-	log.Printf("Letting the cluster run for %v to gather metrics...", duration)
-	<-time.After(duration)
-	if shoulDeployCilium {
-		queryMetrics(t, getPrometheusURL(t, test), duration)
-	} else {
-		queryMetrics(t, fmt.Sprintf("http://%s.%s.svc", prometheusServiceName, ciliumMonitoringNamespace), duration)
+	tests := []TestCase{
+		TestCase{"baseline", []string{}, 0},
+		TestCase{"small-load", []string{path.Join(manifestPath, "abchain.yaml")}, 3},
+		TestCase{"big-load", []string{path.Join(manifestPath, "abchain-big.yaml")}, 50},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			test := harness.NewTest(t)
+			test.Setup()
+			defer test.Close()
+			for _, manifest := range testCase.manifests {
+				deployManifest(t, test, manifest, test.Namespace)
+
+				if err := test.WaitForPodsReady(
+					test.Namespace,
+					metav1.ListOptions{},
+					testCase.podCount,
+					5*time.Minute,
+				); err != nil {
+					t.Fatal("error waiting for pods", err)
+				}
+			}
+			log.Printf("Letting the cluster run for %v to gather metrics...", duration)
+			<-time.After(duration)
+			if shouldDeployCilium {
+				queryMetrics(t, getPrometheusURL(t, test), duration)
+			} else {
+				queryMetrics(t, fmt.Sprintf("http://%s.%s.svc", prometheusServiceName, ciliumMonitoringNamespace), duration)
+			}
+		})
 	}
 }
 
@@ -156,7 +188,7 @@ func deployManifest(t *testing.T, test *kt.Test, manifest, namespace string) {
 
 func deployCilium(t *testing.T, test *kt.Test, namespace string) {
 	// deploy cilium kitchen sink
-	deployManifest(t, test, "../manifests/cilium-hubble-metrics-gke.yaml", test.Namespace)
+	deployManifest(t, test, path.Join(manifestPath, "cilium-hubble-metrics-gke.yaml"), test.Namespace)
 
 	var nodes *corev1.NodeList
 	if nodes = test.ListNodes(metav1.ListOptions{}); nodes == nil {
@@ -200,7 +232,7 @@ func deployCilium(t *testing.T, test *kt.Test, namespace string) {
 }
 
 func deployMonitoring(t *testing.T, test *kt.Test) {
-	deployManifest(t, test, "../manifests/cilium-monitoring-263ebed.yaml", ciliumMonitoringNamespace)
+	deployManifest(t, test, path.Join(manifestPath, "cilium-monitoring-263ebed.yaml"), ciliumMonitoringNamespace)
 
 	if err := test.WaitForPodsReady(
 		ciliumMonitoringNamespace,
@@ -213,7 +245,7 @@ func deployMonitoring(t *testing.T, test *kt.Test) {
 }
 
 func exposePrometheus(t *testing.T, test *kt.Test) {
-	docs := loadYAML(t, "../manifests/expose-prometheus.yaml")
+	docs := loadYAML(t, path.Join(manifestPath, "expose-prometheus.yaml"))
 	for _, d := range docs {
 		if len(d) < 2 {
 			continue
