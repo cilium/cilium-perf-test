@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: &name abchain
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: *name
+  template:
+    metadata:
+      annotations:
+        io.cilium.proxy-visibility: <Ingress/3770/TCP/HTTP>
+      labels:
+        app: *name
+    spec:
+      terminationGracePeriodSeconds: 5
+      containers:
+      - name: *name
+        image: glibsm/abchain:0.0.2
+        ports:
+        - containerPort: 3770
+        env:
+        - name: ABC_PORT
+          value: "3770"
+        - name: ABC_MIN_WAIT
+          value: "1s"
+        - name: ABC_MAX_WAIT
+          value: "2s"
+        - name: ABC_HOST
+          value: "port-abc"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: port-abc
+spec:
+  type: ClusterIP
+  selector:
+    app: abchain
+  ports:
+  - name: http
+    port: 3770
+    targetPort: 3770
